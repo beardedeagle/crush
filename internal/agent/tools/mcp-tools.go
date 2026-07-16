@@ -130,11 +130,31 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 
+	return newMCPToolResponse(
+		result,
+		GetSupportsImagesFromContext(ctx),
+		GetModelNameFromContext(ctx),
+	), nil
+}
+
+func newMCPToolResponse(
+	result mcp.ToolResult,
+	supportsImages bool,
+	modelName string,
+) fantasy.ToolResponse {
+	if result.IsError {
+		return fantasy.NewTextErrorResponse(result.Content)
+	}
+
 	switch result.Type {
 	case "image", "media":
-		if !GetSupportsImagesFromContext(ctx) {
-			modelName := GetModelNameFromContext(ctx)
-			return fantasy.NewTextErrorResponse(fmt.Sprintf("This model (%s) does not support image data.", modelName)), nil
+		if !supportsImages {
+			return fantasy.NewTextErrorResponse(
+				fmt.Sprintf(
+					"This model (%s) does not support image data.",
+					modelName,
+				),
+			)
 		}
 
 		var response fantasy.ToolResponse
@@ -144,8 +164,8 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 			response = fantasy.NewMediaResponse(result.Data, result.MediaType)
 		}
 		response.Content = result.Content
-		return response, nil
+		return response
 	default:
-		return fantasy.NewTextResponse(result.Content), nil
+		return fantasy.NewTextResponse(result.Content)
 	}
 }

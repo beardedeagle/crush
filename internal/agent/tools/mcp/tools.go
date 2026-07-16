@@ -23,6 +23,7 @@ type ToolResult struct {
 	Content   string
 	Data      []byte
 	MediaType string
+	IsError   bool
 }
 
 var allTools = csync.NewMap[string, []*Tool]()
@@ -51,18 +52,26 @@ func RunTool(ctx context.Context, cfg *config.ConfigStore, name, toolName string
 		return ToolResult{}, err
 	}
 
-	if len(result.Content) == 0 {
-		return ToolResult{Type: "text", Content: ""}, nil
-	}
+	return normalizeCallToolResult(result)
+}
 
+func normalizeCallToolResult(result *mcp.CallToolResult) (ToolResult, error) {
 	var textParts []string
 	var imageData []byte
 	var imageMimeType string
 	var audioData []byte
 	var audioMimeType string
 
-	for _, v := range result.Content {
-		switch content := v.(type) {
+	if len(result.Content) == 0 && result.StructuredContent != nil {
+		structuredContent, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("marshal MCP structured content: %w", err)
+		}
+		textParts = append(textParts, string(structuredContent))
+	}
+
+	for _, value := range result.Content {
+		switch content := value.(type) {
 		case *mcp.TextContent:
 			textParts = append(textParts, content.Text)
 		case *mcp.ImageContent:
@@ -76,20 +85,19 @@ func RunTool(ctx context.Context, cfg *config.ConfigStore, name, toolName string
 				audioMimeType = content.MIMEType
 			}
 		default:
-			textParts = append(textParts, fmt.Sprintf("%v", v))
+			textParts = append(textParts, fmt.Sprintf("%v", value))
 		}
 	}
 
 	textContent := strings.Join(textParts, "\n")
 
-	// We need to make sure the data is base64
-	// when using something like docker + playwright the data was not returned correctly.
 	if imageData != nil {
 		return ToolResult{
 			Type:      "image",
 			Content:   textContent,
 			Data:      ensureRawBytes(imageData),
 			MediaType: imageMimeType,
+			IsError:   result.IsError,
 		}, nil
 	}
 
@@ -99,12 +107,14 @@ func RunTool(ctx context.Context, cfg *config.ConfigStore, name, toolName string
 			Content:   textContent,
 			Data:      ensureRawBytes(audioData),
 			MediaType: audioMimeType,
+			IsError:   result.IsError,
 		}, nil
 	}
 
 	return ToolResult{
 		Type:    "text",
 		Content: textContent,
+		IsError: result.IsError,
 	}, nil
 }
 
